@@ -159,6 +159,36 @@ def btn(name, interval=0.2):
     return False
 
 # ─────────────────────────────────────────────
+# Keycap identification
+# ─────────────────────────────────────────────
+# Set DIAG = True and press each keycap in turn: every edge is logged
+# with the function name and the GPIO behind it. The keycap→GPIO wiring
+# is soldered and cannot be read from any file, so this is the only way
+# to establish it definitively rather than by inference.
+DIAG = False
+_diag_prev = {k: False for k in PIN_MAP}
+
+_diag_t0 = time.monotonic()
+
+def diag_buttons():
+    """Log every edge with a timestamp and the full set of pins held.
+
+    The timestamp separates deliberate presses from each other; the
+    held-set distinguishes a two-key chord from two pins that are
+    electrically tied (a short shows as an inseparable pair on every
+    edge, a chord does not).
+    """
+    if not DIAG:
+        return
+    for k in PIN_MAP:
+        p = is_p(k)
+        if p != _diag_prev[k]:
+            _diag_prev[k] = p
+            held = ",".join(PIN_MAP[j] for j in PIN_MAP if is_p(j)) or "-"
+            log(f"PIN  t={time.monotonic()-_diag_t0:7.2f}  {PIN_MAP[k]:5s} "
+                f"{'DOWN' if p else 'up  '}  held=[{held}]")
+
+# ─────────────────────────────────────────────
 # Note name helper
 # ─────────────────────────────────────────────
 _NOTE_NAMES = ("C","C#","D","D#","E","F","F#","G","G#","A","A#","B")
@@ -836,6 +866,8 @@ while True:
     # This retires the old "hold SHF 1.5 s for a root shift" gesture, which
     # would otherwise fire by accident every time you paused to decide
     # which second function you wanted. Root now lives on SHF + 7/8.
+    diag_buttons()
+
     shf_down = is_p("SHF")
     ent_down = is_p("ENT") and not shf_down      # SHF wins if both are held
     mod_held = shf_down or ent_down
@@ -896,6 +928,11 @@ while True:
             status_expiry = now + 0.5          # retire the held page
 
     # ── 4. ENT layer — per-voice mutes, or reset on a tap ─────────────────
+    # If SHF is pressed while ENT is already held, ent_down drops to False
+    # and the release branch below would fire a reset nobody asked for.
+    # Mark the hold consumed so the takeover stays silent.
+    if shf_down and ent_held_since >= 0:
+        ent_consumed = True
     if ent_down:
         if ent_held_since < 0:
             ent_held_since = now
