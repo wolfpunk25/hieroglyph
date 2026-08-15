@@ -97,7 +97,7 @@ CircuitPython runs the file the moment it lands, so it starts playing immediatel
    │  3  │ │  5  │ │  8  │   ▼  OCT   TEMPO   MOD
    └─────┘ └─────┘ └─────┘
            ┌─────┐
-           │  6  │           RESET
+           │  6  │           STOP/START
            └─────┘
 ```
 
@@ -108,12 +108,12 @@ CircuitPython runs the file the moment it lands, so it starts playing immediatel
 | **3** | `GP22` | Octave down |
 | **4** | `GP20` | Tempo up (50–120 BPM, repeats while held) |
 | **5** | `GP18` | Tempo down |
-| **6** | `GP17` | **Reset** — MIDI panic, clears octave / step / energy. Also a modifier |
+| **6** | `GP17` | **Stop / start** — freezes the sequencer where it stands. Also a modifier |
 | **7** | `GP19` | Mod up — CC74 |
 | **8** | `GP16` | Mod down — CC74 |
 
-Three vertical up/down columns, with the two disruptive controls — mutate and reset — on
-the isolated top and bottom keys, out of the play zone.
+Three vertical up/down columns, with the two disruptive controls — mutate and the
+transport — on the isolated top and bottom keys, out of the play zone.
 
 Two chords:
 
@@ -134,7 +134,7 @@ Hold **1** for global parameters:
 | **4 / 5** | Tempo preset up / down — 50, 60, 70, 85, 100, 120 BPM |
 | **7 / 8** | Next / previous root — C, F, G, A, E (I IV V vi iii of C) |
 
-Hold **6** for the mix:
+Tap **6** to stop or start. Hold **6** for the mix:
 
 | Hold 6 + | Does |
 |---|---|
@@ -144,6 +144,21 @@ Hold **6** for the mix:
 | **5** | Mute / unmute HIGH |
 | **7** | Everything live |
 | **8** | Everything muted — instant drop-out |
+
+### Transport
+
+Tapping **6** stops the sequencer and cuts every sounding note; tapping again picks up
+from exactly where it left off, so a drop-out doesn't lose the phrase you were in. While
+stopped the matrix holds a pause symbol and the NeoPixel sits a steady dim red, so the
+state is obvious at a glance.
+
+Restarting schedules the next beat a full step ahead, so a long stop doesn't fire a burst
+of catch-up ticks the moment it resumes.
+
+> This replaced an earlier reset that zeroed the octave, step counter and energy phase.
+> It was almost impossible to perceive: the only genuinely useful part was the MIDI panic,
+> which stopping does anyway, and zeroing the energy phase actively worked against you by
+> dropping the texture to its sparsest every time. **6 + 8** covers the panic case.
 
 Muting cuts a sounding note immediately rather than waiting for it to finish, so a
 drop-out lands on the beat. While either modifier is held the matrix shows the relevant
@@ -168,9 +183,10 @@ The NeoPixel colour-codes the last action, which is the quickest way to identify
 | 🔵 Blue | Octave |
 | 🟣 Purple | Mod wheel |
 | 🩷 Hot pink | Mutate |
-| 🟡 Gold | Reset / scale change |
+| 🟡 Gold | Stop / start, or a scale change |
 | 🔴 Red | Mute change |
-| 🟢 Green pulse | Idle — brightness tracks the energy cycle |
+| 🟢 Green pulse | Playing — brightness tracks the energy cycle |
+| 🟥 Steady dim red | Stopped |
 
 The **four PWM LEDs** flash on note-on, then decay to a slow phase-offset breathe.
 

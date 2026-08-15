@@ -83,6 +83,8 @@ def flash(colour, duration=FLASH_DUR):
     pixel_expiry = time.monotonic() + duration
 
 def idle_colour():
+    if not running:
+        return (40, 0, 0)          # stopped — steady dim red
     e = get_energy()
     g = int(15 + 65 * e)
     return (0, g, int(g * 0.5))
@@ -117,7 +119,7 @@ def update_pixel():
 #   │ 3 │ │ 5 │ │ 8 │  OCT▼ TEMPO▼ MOD▼  GP22 GP18 GP16
 #   └───┘ └───┘ └───┘
 #         ┌───┐
-#         │ 6 │  RESET                  GP17
+#         │ 6 │  STOP/START             GP17
 #         └───┘
 #
 # The keycap→GPIO wiring is soldered and fixed. This dict is the only
@@ -139,7 +141,7 @@ PIN_MAP = {
     "OCT_UP": "GP21", "OCT_DN": "GP22",  # 2 / 3  — left column
     "T_UP":   "GP20", "T_DN":   "GP18",  # 4 / 5  — middle column
     "MOD_UP": "GP19", "MOD_DN": "GP16",  # 7 / 8  — right column
-    "ENT":    "GP17",                    # 6  — reset   (isolated, bottom)
+    "ENT":    "GP17",                    # 6  — transport (isolated, bottom)
 }
 btns = {k: digitalio.DigitalInOut(getattr(board, v)) for k, v in PIN_MAP.items()}
 for b in btns.values():
@@ -335,6 +337,7 @@ def mutate_voice_lead(current, bias=0, low=24, high=96):
 # ─────────────────────────────────────────────
 octave      = 0
 BPM         = 70
+running     = True   # False = sequencer frozen, see toggle_run()
 mod_val     = 64
 last_mod    = 64
 
@@ -551,6 +554,21 @@ def draw_sequencer():
                 px(c, r + 1)
     mx.show()
 
+def draw_stopped():
+    """Two vertical bars — a pause symbol, held while the sequencer is frozen."""
+    mx.fill(0)
+    for r in range(1, 7):
+        for c in (1, 2, 5, 6):
+            px(c, r)
+    mx.show()
+
+def draw_idle():
+    """Whatever the matrix should show when no status page is up."""
+    if running:
+        draw_sequencer()
+    else:
+        draw_stopped()
+
 def draw_status(page):
     """
     Row 0 carries a position marker saying which page you're looking at:
@@ -585,9 +603,10 @@ def draw_status(page):
         px(4, 1)
         px(4, 7)
     elif page == "mutes":
-        # One row per voice in logical space: BASS INNR MID HIGH.
-        # ROTATE turns these into four vertical bars on the physical
-        # display. Full bar = sounding, single stub = muted.
+        # One row per voice, stacked by register as you look at it:
+        # BASS INNR MID HIGH. Full bar = sounding, single stub = muted.
+        # (Drawing is in logical coords throughout — px() applies ROTATE,
+        # so what is drawn "up" here is what reads upright on the panel.)
         for i, t in enumerate(tracks):
             r = i * 2
             if t["mute"]:
@@ -776,6 +795,31 @@ def mute_all(state):
         set_mute(i, state)
     status_show("mutes")
 
+def toggle_run():
+    """
+    Transport on button 6. Stopping cuts every sounding note and freezes
+    the sequencer where it stands; starting picks up from exactly there,
+    so a drop-out does not lose the phrase you were in.
+
+    This replaces the old reset, which zeroed the octave, step counter and
+    energy phase. That was almost impossible to perceive — the only
+    genuinely useful part was the panic, which stopping does anyway, and
+    the energy reset actively worked against you by dropping the texture
+    to its sparsest every time.
+    """
+    global running, next_tick
+    running = not running
+    flash(COL_RESET, duration=0.4)
+    if running:
+        # Resume a full step from now, so a long stop does not fire a
+        # burst of catch-up ticks the moment it restarts.
+        next_tick = time.monotonic() + 60.0 / BPM
+        log("RUN    playing")
+    else:
+        midi_panic()
+        draw_stopped()
+        log("RUN    stopped")
+
 def layer_hit(name, fn, arg, colour):
     """One second-function slot. Returns True if it fired."""
     if btn(name, 0.30):
@@ -927,7 +971,7 @@ while True:
         if status_expiry > now + 2.0:
             status_expiry = now + 0.5          # retire the held page
 
-    # ── 4. ENT layer — per-voice mutes, or reset on a tap ─────────────────
+    # ── 4. ENT layer — per-voice mutes, or stop/start on a tap ────────────
     # If SHF is pressed while ENT is already held, ent_down drops to False
     # and the release branch below would fire a reset nobody asked for.
     # Mark the hold consumed so the takeover stays silent.
@@ -946,16 +990,8 @@ while True:
         if layer_hit("MOD_DN", mute_all,    True, COL_MUTE): ent_consumed = True
     elif ent_held_since >= 0:
         if not ent_consumed:
-            midi_panic()
-            octave = 0; master_step = 0; energy_ctr = 0
-            for t in tracks:
-                t["next_play_step"] = 0
-                t["momentum"]       = 0
-                t["last_played"]    = -1
-                t["mute"]           = False
+            toggle_run()
             deco_all(0.85)
-            flash(COL_RESET, duration=0.5)
-            log("RESET  Panic sent | state cleared")
         ent_held_since = -1.0
         if status_expiry > now + 2.0:
             status_expiry = now + 0.5
@@ -982,7 +1018,7 @@ while True:
                 log(f"TEMPO  {BPM} BPM  (step={60/BPM*1000:.0f}ms)")
 
     # ── 6. Sequencer tick ─────────────────────────────────────────────────
-    if now >= next_tick:
+    if running and now >= next_tick:
         next_tick = now + step_time
         master_step += 1
         energy_ctr  += 1
@@ -1068,7 +1104,7 @@ while True:
             else:
                 status_page = None
                 status_sig  = None
-                draw_sequencer()      # hand the display straight back
+                draw_idle()           # hand the display straight back
         if status_page is not None:
             sig = status_signature(status_page)
             if sig != status_sig:
