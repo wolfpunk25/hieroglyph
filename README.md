@@ -167,6 +167,18 @@ for minblues so it doesn't collide with major.
 Press **4 + 5 together** to sweep all three pages on demand. That combination was
 previously a no-op, since tempo up and down cancelled each other out.
 
+### Display rotation
+
+The matrix is mounted turned relative to the drawing code's idea of "up". Every pixel
+write goes through `px()`, which applies a single constant near the top of the matrix
+section in `code.py`:
+
+```python
+ROTATE = 90    # degrees counter-clockwise: 0, 90, 180 or 270
+```
+
+Changing that one line re-orients the sequencer view and all status pages together.
+
 ---
 
 ## How it works
