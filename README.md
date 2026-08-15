@@ -103,12 +103,12 @@ CircuitPython runs the file the moment it lands, so it starts playing immediatel
 
 | Button | GPIO | Function |
 |---|---|---|
-| **1** | `GP26` | **Mutate** — tap = rebuild all four phrases; hold 1.5 s = shift key |
+| **1** | `GP26` | **Mutate** — tap rebuilds all four phrases. Also a modifier, see below |
 | **2** | `GP21` | Octave up |
 | **3** | `GP22` | Octave down |
 | **4** | `GP20` | Tempo up (50–120 BPM, repeats while held) |
 | **5** | `GP18` | Tempo down |
-| **6** | `GP17` | **Reset** — MIDI panic, clears octave / step / energy |
+| **6** | `GP17` | **Reset** — MIDI panic, clears octave / step / energy. Also a modifier |
 | **7** | `GP19` | Mod up — CC74 |
 | **8** | `GP16` | Mod down — CC74 |
 
@@ -122,7 +122,7 @@ Two chords:
 
 ### Second-function layer
 
-Buttons **1** and **2** double as modifiers. Each one *tapped alone* still does its
+Buttons **1** and **6** double as modifiers. Each one *tapped alone* still does its
 original job — but the action now fires on **release**, which is what makes holding it
 mean something different.
 
@@ -169,6 +169,7 @@ The NeoPixel colour-codes the last action, which is the quickest way to identify
 | 🟣 Purple | Mod wheel |
 | 🩷 Hot pink | Mutate |
 | 🟡 Gold | Reset / scale change |
+| 🔴 Red | Mute change |
 | 🟢 Green pulse | Idle — brightness tracks the energy cycle |
 
 The **four PWM LEDs** flash on note-on, then decay to a slow phase-offset breathe.
