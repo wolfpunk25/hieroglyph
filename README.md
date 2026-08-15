@@ -120,6 +120,40 @@ Two chords:
 - **7 + 8 together** — snap the mod wheel back to centre (64)
 - **4 + 5 together** — sweep the full status display on the matrix (BPM → octave → scale)
 
+### Second-function layer
+
+Buttons **1** and **2** double as modifiers. Each one *tapped alone* still does its
+original job — but the action now fires on **release**, which is what makes holding it
+mean something different.
+
+Hold **1** for global parameters:
+
+| Hold 1 + | Does |
+|---|---|
+| **2 / 3** | Next / previous scale — pick one outright instead of waiting for the drift |
+| **4 / 5** | Tempo preset up / down — 50, 60, 70, 85, 100, 120 BPM |
+| **7 / 8** | Next / previous root — C, F, G, A, E (I IV V vi iii of C) |
+
+Hold **6** for the mix:
+
+| Hold 6 + | Does |
+|---|---|
+| **2** | Mute / unmute BASS |
+| **3** | Mute / unmute INNR |
+| **4** | Mute / unmute MID |
+| **5** | Mute / unmute HIGH |
+| **7** | Everything live |
+| **8** | Everything muted — instant drop-out |
+
+Muting cuts a sounding note immediately rather than waiting for it to finish, so a
+drop-out lands on the beat. While either modifier is held the matrix shows the relevant
+page — scale and root under **1**, the four voices under **6** — so you can see what
+you're about to change before you change it.
+
+> Holding **1** for 1.5 s used to trigger a root shift. That gesture is gone: it would
+> have fired every time you paused to decide which second function you wanted. Root
+> selection moved to **1 + 7/8**, where it's deliberate.
+
 > The keycap-to-GPIO wiring is soldered and is the ground truth. Which *function* sits on
 > which pin is just the `PIN_MAP` dict near the top of `code.py` — remap freely without
 > touching hardware.

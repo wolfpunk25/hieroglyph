@@ -73,6 +73,7 @@ COL_MOD    = (160,   0, 220)
 COL_CHAOS  = (255,   0, 120)
 COL_RESET  = (255, 200,   0)
 COL_SCALE  = (255, 128,   0)
+COL_MUTE   = (255,  40,  40)
 FLASH_DUR  = 0.25
 pixel_expiry = 0.0
 
@@ -178,7 +179,7 @@ SCALE_NAMES = list(SCALE_SHAPES.keys())
 scale_idx   = 0
 ROOT        = 48   # C3
 
-# Tonal centres used by root_shift() on extended mutation hold.
+# Tonal centres walked by set_root(), on SHF + mod buttons.
 # These are the I, IV, V, vi, iii roots of C — all harmonically related,
 # so cycling through them produces interesting colour without ever
 # sounding wrong. Stored as MIDI note numbers (C3 octave area).
@@ -329,13 +330,18 @@ ENERGY_HALF = 180   # ~2.6 min per half-cycle at 70 BPM
 # "didn't fire" event (100+ times per session). Tuple is faster and free.
 SKIP_REST = (1, 1, 2)
 
-# Mutation button hold-state
-# shf_held_since : time.monotonic() when SHF was first pressed (-1 = not held)
-# shf_fired      : True once the initial press action has run this hold
-# shf_root_fired : time of last root shift during this hold (avoids repeat)
+# Modifier hold-state.
+# SHF (button 1) and ENT (button 6) are the two isolated corner keys and
+# each does double duty: held, it is a modifier; tapped alone, it fires
+# its original action on RELEASE.
+#   *_held_since : time.monotonic() when first pressed (-1 = not held)
+#   *_consumed   : True once this hold has done something, which
+#                  suppresses the tap action on release
 shf_held_since = -1.0
-shf_fired      = False
-shf_root_fired = -1.0
+shf_consumed   = False
+ent_held_since = -1.0
+ent_consumed   = False
+HOLD_PAGE      = 30.0   # status page duration while a modifier is held
 
 def get_energy():
     phase = energy_ctr % (ENERGY_HALF * 2)
@@ -414,7 +420,8 @@ tracks = [
 # Snap all initial buffer notes into their register-bounded scale
 # FIX: was nearest_in_scale() (ignores register) — now register-aware
 for t in tracks:
-    t["buf"] = [nearest_in_register(n, t["low"], t["high"]) for n in t["buf"]]
+    t["mute"] = False
+    t["buf"]  = [nearest_in_register(n, t["low"], t["high"]) for n in t["buf"]]
 
 # ─────────────────────────────────────────────
 # Matrix: sequencer view + status overlay
@@ -547,6 +554,17 @@ def draw_status(page):
                 px(c, r)
         px(4, 1)
         px(4, 7)
+    elif page == "mutes":
+        # One row per voice in logical space: BASS INNR MID HIGH.
+        # ROTATE turns these into four vertical bars on the physical
+        # display. Full bar = sounding, single stub = muted.
+        for i, t in enumerate(tracks):
+            r = i * 2
+            if t["mute"]:
+                px(0, r)
+            else:
+                for c in range(8):
+                    px(c, r)
     mx.show()
 
 def status_signature(page):
@@ -555,6 +573,7 @@ def status_signature(page):
     if page == "oct":   return (page, octave)
     if page == "scale": return (page, scale_idx, ROOT)
     if page == "mod":   return (page, int(mod_val / 127.0 * 8 + 0.5))
+    if page == "mutes": return (page, tuple(t["mute"] for t in tracks))
     return None
 
 def status_show(page, dur=STATUS_DUR):
@@ -654,23 +673,86 @@ def full_mutation():
         log(f"  [{i}] {t['label']}  prob={t['prob']:.2f}  [{buf_str}]")
 
 
-def root_shift():
-    """
-    Advance to the next tonal centre in ROOT_CYCLE and re-snap all buffers.
-    Called when SHF is held for 1.5 s — a second, deeper layer of change
-    on top of the phrase mutation that already happened on press.
+# ───────────────────────────────────────────
+# Second-function targets
+# ───────────────────────────────────────────
+# Reached by holding a modifier key. Each is a direct jump to a value,
+# as opposed to the base layer's nudge-by-one — the point of the layer
+# is to get somewhere in one gesture while playing.
+# ───────────────────────────────────────────
+BPM_PRESETS = (50, 60, 70, 85, 100, 120)
 
-    ROOT_CYCLE = C3, F3, G3, A3, E3 (I IV V vi iii of C major).
-    All are harmonically related, so the shift always sounds intentional.
-    """
-    global ROOT, root_cycle_idx
-    root_cycle_idx = (root_cycle_idx + 1) % len(ROOT_CYCLE)
-    ROOT = ROOT_CYCLE[root_cycle_idx]
-    SCALE[:] = build_scale(ROOT, SCALE_SHAPES[SCALE_NAMES[scale_idx]])
+def resnap_buffers():
     for t in tracks:
         t["buf"] = [nearest_in_register(n, t["low"], t["high"]) for n in t["buf"]]
+
+def set_scale(step):
+    """Choose a scale outright instead of waiting on the random drift."""
+    global scale_idx
+    scale_idx = (scale_idx + step) % len(SCALE_NAMES)
+    SCALE[:]  = build_scale(ROOT, SCALE_SHAPES[SCALE_NAMES[scale_idx]])
+    resnap_buffers()
     status_show("scale")
-    log(f"ROOT SHIFT → {note_name(ROOT)}  (cycle pos {root_cycle_idx})")
+    log(f"SCALE  → {SCALE_NAMES[scale_idx]}  root={note_name(ROOT)}")
+
+def set_root(step):
+    """
+    Walk the tonal centre through ROOT_CYCLE — C F G A E, the I IV V vi
+    iii of C. All harmonically related, so a shift always sounds
+    intentional rather than like a mistake.
+    """
+    global ROOT, root_cycle_idx
+    root_cycle_idx = (root_cycle_idx + step) % len(ROOT_CYCLE)
+    ROOT = ROOT_CYCLE[root_cycle_idx]
+    SCALE[:] = build_scale(ROOT, SCALE_SHAPES[SCALE_NAMES[scale_idx]])
+    resnap_buffers()
+    status_show("scale")
+    log(f"ROOT   → {note_name(ROOT)}  (cycle pos {root_cycle_idx})")
+
+def bpm_preset(step):
+    """
+    Jump between musically useful tempos. Nudging by 1 BPM is still on
+    the base layer; this is for getting from 70 to 100 mid-performance.
+    """
+    global BPM
+    i = min(range(len(BPM_PRESETS)), key=lambda k: abs(BPM_PRESETS[k] - BPM))
+    # If snapping to the nearest preset already moves the way you asked,
+    # that is the jump — otherwise step to the next one along.
+    if BPM_PRESETS[i] != BPM and (
+            (step > 0 and BPM_PRESETS[i] > BPM) or
+            (step < 0 and BPM_PRESETS[i] < BPM)):
+        BPM = BPM_PRESETS[i]
+    else:
+        BPM = BPM_PRESETS[max(0, min(len(BPM_PRESETS) - 1, i + step))]
+    status_show("bpm")
+    log(f"TEMPO  preset → {BPM} BPM")
+
+def set_mute(i, state):
+    t = tracks[i]
+    if t["mute"] == state:
+        return
+    t["mute"] = state
+    if state and t["note"] != -1:
+        midi.send(NoteOff(t["note"], 0))   # drop out now, not at end of note
+        t["note"] = -1
+    status_show("mutes")
+    log(f"MUTE   {t['label']} {'muted' if state else 'live'}")
+
+def toggle_mute(i):
+    set_mute(i, not tracks[i]["mute"])
+
+def mute_all(state):
+    for i in range(len(tracks)):
+        set_mute(i, state)
+    status_show("mutes")
+
+def layer_hit(name, fn, arg, colour):
+    """One second-function slot. Returns True if it fired."""
+    if btn(name, 0.30):
+        fn(arg)
+        flash(colour)
+        return True
+    return False
 
 
 def drift_prob(idx):
@@ -739,18 +821,38 @@ while True:
     now = time.monotonic()
     step_time = 60.0 / BPM
 
+    # ── Modifier state ────────────────────────────────────────────────────
+    # SHF (button 1) and ENT (button 6) are the two isolated corner keys,
+    # and each now does double duty:
+    #
+    #   tap alone           → its original action, fired on RELEASE
+    #   hold + another key  → second function; the tap action is suppressed
+    #
+    # SHF carries the global layer (scale / tempo preset / root), ENT the
+    # mute layer. Firing on release is what makes a layer possible at all:
+    # a press can no longer commit to an action before you have said which
+    # one you meant.
+    #
+    # This retires the old "hold SHF 1.5 s for a root shift" gesture, which
+    # would otherwise fire by accident every time you paused to decide
+    # which second function you wanted. Root now lives on SHF + 7/8.
+    shf_down = is_p("SHF")
+    ent_down = is_p("ENT") and not shf_down      # SHF wins if both are held
+    mod_held = shf_down or ent_down
+
     # ── 1. Mod wheel (latching, time-based ramp, non-blocking) ────────────
     # Hold MOD_UP / MOD_DN to sweep. Release and the value STAYS put.
     # Press BOTH mod buttons together to snap back to centre (64).
     if now - mod_last_move >= MOD_RATE:
         mod_last_move = now
-        up, dn = is_p("MOD_UP"), is_p("MOD_DN")
-        if up and dn:
-            mod_val = 64                                  # both = re-centre
-        elif up:
-            mod_val = min(127, mod_val + MOD_STEP)
-        elif dn:
-            mod_val = max(0,   mod_val - MOD_STEP)
+        if not mod_held:
+            up, dn = is_p("MOD_UP"), is_p("MOD_DN")
+            if up and dn:
+                mod_val = 64                              # both = re-centre
+            elif up:
+                mod_val = min(127, mod_val + MOD_STEP)
+            elif dn:
+                mod_val = max(0,   mod_val - MOD_STEP)
     if mod_val != last_mod:
         midi.send(ControlChange(74, mod_val))
         flash(COL_MOD)
@@ -758,91 +860,89 @@ while True:
         log(f"MOD    CC74={mod_val}")
         last_mod = mod_val
 
-    # ── 2. Octave shift ───────────────────────────────────────────────────
-    # FIX: was time.sleep(0.25). Now rate-limited via btn() — no blocking.
-    if btn("OCT_UP", 0.28):
-        octave = min(2, octave + 1)
-        flash(COL_OCTAVE)
-        status_show("oct")
-        log(f"OCTAVE {octave:+d}  ({octave*12:+d} semitones)")
-    if btn("OCT_DN", 0.28):
-        octave = max(-2, octave - 1)
-        flash(COL_OCTAVE)
-        status_show("oct")
-        log(f"OCTAVE {octave:+d}  ({octave*12:+d} semitones)")
+    # ── 2. Octave shift (base layer) ──────────────────────────────────────
+    if not mod_held:
+        if btn("OCT_UP", 0.28):
+            octave = min(2, octave + 1)
+            flash(COL_OCTAVE)
+            status_show("oct")
+            log(f"OCTAVE {octave:+d}  ({octave*12:+d} semitones)")
+        if btn("OCT_DN", 0.28):
+            octave = max(-2, octave - 1)
+            flash(COL_OCTAVE)
+            status_show("oct")
+            log(f"OCTAVE {octave:+d}  ({octave*12:+d} semitones)")
 
-    # ── 3. Reset ──────────────────────────────────────────────────────────
-    # FIX: was time.sleep(0.3) + partial note cleanup.
-    # Now uses midi_panic() and a 0.5s guard to prevent accidental double-fire.
-    if btn("ENT", 0.5):
-        midi_panic()
-        octave = 0; master_step = 0; energy_ctr = 0
-        for t in tracks:
-            t["next_play_step"] = 0
-            t["momentum"]       = 0
-            t["last_played"]    = -1
-        deco_all(0.85)
-        flash(COL_RESET, duration=0.5)
-        log("RESET  Panic sent | state cleared")
-
-    # ── 4. Mutation (two-tier hold behaviour) ────────────────────────────
-    #
-    #   PRESS  (fires once on first detection):
-    #     → Full phrase mutation: cuts all notes, rebuilds all 4 buffers
-    #       from random seeds using bold voice leading, shakes up density.
-    #       Effect is immediate and audible on the very next beat.
-    #
-    #   HOLD 1.5 s (fires once per 2 s while still held):
-    #     → Root shift: advances tonal centre through ROOT_CYCLE.
-    #       A second layer of change on top of the phrase mutation.
-    #       Pixel flashes gold to signal the shift.
-    #
-    if is_p("SHF"):
+    # ── 3. SHF layer — scale / tempo preset / root, or mutate on a tap ────
+    if shf_down:
         if shf_held_since < 0:
             shf_held_since = now
-            shf_fired      = False
-        held = now - shf_held_since
-
-        if not shf_fired:
-            # First detection — fire the full mutation immediately
-            shf_fired = True
+            shf_consumed   = False
+            status_show("scale", HOLD_PAGE)    # show what this layer edits
+        if layer_hit("OCT_UP", set_scale,    1, COL_SCALE): shf_consumed = True
+        if layer_hit("OCT_DN", set_scale,   -1, COL_SCALE): shf_consumed = True
+        if layer_hit("T_UP",   bpm_preset,   1, COL_TEMPO): shf_consumed = True
+        if layer_hit("T_DN",   bpm_preset,  -1, COL_TEMPO): shf_consumed = True
+        if layer_hit("MOD_UP", set_root,     1, COL_SCALE): shf_consumed = True
+        if layer_hit("MOD_DN", set_root,    -1, COL_SCALE): shf_consumed = True
+    elif shf_held_since >= 0:
+        if not shf_consumed:
             full_mutation()
             deco_all(0.9)
             flash(COL_CHAOS, duration=0.4)
-            log(f"MUTATE press  held={held:.2f}s")
-
-        elif held > 1.5 and now - shf_root_fired > 2.0:
-            # Extended hold — shift tonal centre every 2 s
-            shf_root_fired = now
-            root_shift()
-            flash(COL_SCALE, duration=0.4)
-            log(f"MUTATE root-shift  held={held:.2f}s  root={note_name(ROOT)}")
-    else:
+            log("MUTATE tap")
         shf_held_since = -1.0
-        shf_fired      = False
+        if status_expiry > now + 2.0:
+            status_expiry = now + 0.5          # retire the held page
 
-    # ── 5. Tempo — rate-limited repeat while held ─────────────────────────
-    # FIX: was time.sleep(0.1). Now repeats every 0.12s via btn() — same
-    # feel, no blocking.
+    # ── 4. ENT layer — per-voice mutes, or reset on a tap ─────────────────
+    if ent_down:
+        if ent_held_since < 0:
+            ent_held_since = now
+            ent_consumed   = False
+            status_show("mutes", HOLD_PAGE)
+        if layer_hit("OCT_UP", toggle_mute,    0, COL_MUTE): ent_consumed = True
+        if layer_hit("OCT_DN", toggle_mute,    1, COL_MUTE): ent_consumed = True
+        if layer_hit("T_UP",   toggle_mute,    2, COL_MUTE): ent_consumed = True
+        if layer_hit("T_DN",   toggle_mute,    3, COL_MUTE): ent_consumed = True
+        if layer_hit("MOD_UP", mute_all,   False, COL_MUTE): ent_consumed = True
+        if layer_hit("MOD_DN", mute_all,    True, COL_MUTE): ent_consumed = True
+    elif ent_held_since >= 0:
+        if not ent_consumed:
+            midi_panic()
+            octave = 0; master_step = 0; energy_ctr = 0
+            for t in tracks:
+                t["next_play_step"] = 0
+                t["momentum"]       = 0
+                t["last_played"]    = -1
+                t["mute"]           = False
+            deco_all(0.85)
+            flash(COL_RESET, duration=0.5)
+            log("RESET  Panic sent | state cleared")
+        ent_held_since = -1.0
+        if status_expiry > now + 2.0:
+            status_expiry = now + 0.5
+
+    # ── 5. Tempo — rate-limited repeat while held (base layer) ────────────
     # Both tempo buttons together sweeps the full status display. That
-    # combination used to be a no-op (up then down cancelled out), so it
-    # costs nothing to claim it as a gesture.
-    if is_p("T_UP") and is_p("T_DN"):
-        if now - chord_last >= 0.6:
-            chord_last = now
-            status_sweep()
-            log("STATUS sweep (tempo chord)")
-    else:
-        if btn("T_UP", 0.12):
-            BPM = min(120, BPM + 1)
-            flash(COL_TEMPO)
-            status_show("bpm")
-            log(f"TEMPO  {BPM} BPM  (step={60/BPM*1000:.0f}ms)")
-        if btn("T_DN", 0.12):
-            BPM = max(50, BPM - 1)
-            flash(COL_TEMPO)
-            status_show("bpm")
-            log(f"TEMPO  {BPM} BPM  (step={60/BPM*1000:.0f}ms)")
+    # combination is otherwise a no-op, since up and down cancel out.
+    if not mod_held:
+        if is_p("T_UP") and is_p("T_DN"):
+            if now - chord_last >= 0.6:
+                chord_last = now
+                status_sweep()
+                log("STATUS sweep (tempo chord)")
+        else:
+            if btn("T_UP", 0.12):
+                BPM = min(120, BPM + 1)
+                flash(COL_TEMPO)
+                status_show("bpm")
+                log(f"TEMPO  {BPM} BPM  (step={60/BPM*1000:.0f}ms)")
+            if btn("T_DN", 0.12):
+                BPM = max(50, BPM - 1)
+                flash(COL_TEMPO)
+                status_show("bpm")
+                log(f"TEMPO  {BPM} BPM  (step={60/BPM*1000:.0f}ms)")
 
     # ── 6. Sequencer tick ─────────────────────────────────────────────────
     if now >= next_tick:
@@ -882,7 +982,9 @@ while True:
 
             # ── Note on ───────────────────────────────────────────────────
             elif t["note"] == -1 and master_step >= t["next_play_step"]:
-                if random.random() < t["prob"]:
+                if t["mute"]:
+                    t["next_play_step"] = master_step + 2
+                elif random.random() < t["prob"]:
 
                     raw          = t["buf"][t["buf_pos"]]
                     t["buf_pos"] = (t["buf_pos"] + 1) % len(t["buf"])
