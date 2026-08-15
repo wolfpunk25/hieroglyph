@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd/
+.metadata_never_index
+
+# CircuitPython / CIRCUITPY drive artefacts
+boot_out.txt
+settings.toml
+lib/
+libArchive/
+stubArchive/
+sd/
+*.uf2
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor
+.vscode/
