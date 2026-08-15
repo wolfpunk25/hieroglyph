@@ -103,11 +103,42 @@ def update_pixel():
 #   0.28  — one action per deliberate press (octave, chaos)
 #   0.50  — guarded single-fire (reset — prevents accidental double-fire)
 # ─────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# Physical keycap layout (numbers are printed on the case):
+#
+#         ┌───┐
+#         │ 1 │  MUTATE                 GP26
+#         └───┘
+#   ┌───┐ ┌───┐ ┌───┐
+#   │ 2 │ │ 4 │ │ 7 │  OCT▲ TEMPO▲ MOD▲  GP21 GP20 GP19
+#   └───┘ └───┘ └───┘
+#   ┌───┐ ┌───┐ ┌───┐
+#   │ 3 │ │ 5 │ │ 8 │  OCT▼ TEMPO▼ MOD▼  GP22 GP18 GP16
+#   └───┘ └───┘ └───┘
+#         ┌───┐
+#         │ 6 │  RESET                  GP17
+#         └───┘
+#
+# The keycap→GPIO wiring is soldered and fixed. This dict is the only
+# thing deciding which function lands on which key, so the layout can be
+# rearranged freely without touching hardware.
+#
+# FIX: the as-built mapping put the octave pair on buttons 3 and 8 —
+# split across opposite sides of the board AND inverted (down on the
+# left, up on the right), while every other pair ran up-over-down.
+# It was effectively unmemorable. Reset also sat at button 7, in the
+# middle of the play zone, where a mis-hit would panic all notes and
+# wipe the octave / step / energy state.
+#
+# Now: three clean vertical up/down columns, with the two disruptive
+# singles pushed to the isolated top and bottom keys.
+# ─────────────────────────────────────────────
 PIN_MAP = {
-    "MOD_UP": "GP20", "MOD_DN": "GP18",
-    "OCT_UP": "GP16", "OCT_DN": "GP22",
-    "SHF":    "GP21", "ENT":    "GP19",
-    "T_UP":   "GP26", "T_DN":   "GP17",
+    "SHF":    "GP26",                    # 1  — mutate  (isolated, top)
+    "OCT_UP": "GP21", "OCT_DN": "GP22",  # 2 / 3  — left column
+    "T_UP":   "GP20", "T_DN":   "GP18",  # 4 / 5  — middle column
+    "MOD_UP": "GP19", "MOD_DN": "GP16",  # 7 / 8  — right column
+    "ENT":    "GP17",                    # 6  — reset   (isolated, bottom)
 }
 btns = {k: digitalio.DigitalInOut(getattr(board, v)) for k, v in PIN_MAP.items()}
 for b in btns.values():

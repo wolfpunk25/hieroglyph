@@ -87,32 +87,35 @@ CircuitPython runs the file the moment it lands, so it starts playing immediatel
 ## Controls
 
 ```
-   ┌─────┐
-   │  1  │  TEMPO ▲
-   └─────┘
+           ┌─────┐
+           │  1  │           MUTATE
+           └─────┘
    ┌─────┐ ┌─────┐ ┌─────┐
-   │  2  │ │  4  │ │  7  │
+   │  2  │ │  4  │ │  7  │   ▲  OCT   TEMPO   MOD
    └─────┘ └─────┘ └─────┘
    ┌─────┐ ┌─────┐ ┌─────┐
-   │  3  │ │  5  │ │  8  │
+   │  3  │ │  5  │ │  8  │   ▼  OCT   TEMPO   MOD
    └─────┘ └─────┘ └─────┘
            ┌─────┐
-           │  6  │  TEMPO ▼
+           │  6  │           RESET
            └─────┘
 ```
 
 | Button | GPIO | Function |
 |---|---|---|
-| **1** | `GP26` | Tempo up (50–120 BPM, repeats while held) |
-| **2** | `GP21` | **Mutate** — tap = rebuild all four phrases; hold 1.5 s = shift key |
-| **3** | `GP22` | Octave **down** |
-| **4** | `GP20` | Mod up — CC74 |
-| **5** | `GP18` | Mod down — CC74 |
-| **6** | `GP17` | Tempo down |
-| **7** | `GP19` | **Reset** — MIDI panic, clears octave / step / energy |
-| **8** | `GP16` | Octave **up** |
+| **1** | `GP26` | **Mutate** — tap = rebuild all four phrases; hold 1.5 s = shift key |
+| **2** | `GP21` | Octave up |
+| **3** | `GP22` | Octave down |
+| **4** | `GP20` | Tempo up (50–120 BPM, repeats while held) |
+| **5** | `GP18` | Tempo down |
+| **6** | `GP17` | **Reset** — MIDI panic, clears octave / step / energy |
+| **7** | `GP19` | Mod up — CC74 |
+| **8** | `GP16` | Mod down — CC74 |
 
-Press **4 + 5 together** to snap the mod wheel back to centre (64).
+Three vertical up/down columns, with the two disruptive controls — mutate and reset — on
+the isolated top and bottom keys, out of the play zone.
+
+Press **7 + 8 together** to snap the mod wheel back to centre (64).
 
 > The keycap-to-GPIO wiring is soldered and is the ground truth. Which *function* sits on
 > which pin is just the `PIN_MAP` dict near the top of `code.py` — remap freely without
@@ -164,7 +167,7 @@ velocity and the idle pixel colour.
 **Drift.** Every 300 steps there's a 35% chance the scale silently changes — pentatonic →
 major → dorian → lydian → minor blues.
 
-**Mutate** (button 2) cuts all playing notes, rebuilds every phrase buffer from fresh random
+**Mutate** (button 1) cuts all playing notes, rebuilds every phrase buffer from fresh random
 seeds using bolder voice leading, and reshuffles density. Held, it walks the tonal centre
 through C → F → G → A → E (I-IV-V-vi-iii), so a key change always sounds intentional.
 
