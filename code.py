@@ -478,6 +478,20 @@ status_queue  = None   # remaining pages when sweeping all three
 status_sig    = None   # last-rendered value, so we only redraw on change
 chord_last    = 0.0
 
+# Display rotation, in degrees counter-clockwise: 0, 90, 180 or 270.
+# The matrix is mounted turned relative to the drawing code's idea of
+# "up", so every pixel write goes through px() and is transformed once
+# here. Change this constant alone to re-orient the whole display —
+# sequencer view and status pages together.
+ROTATE = 90
+
+def px(x, y, v=1):
+    """Write one pixel in logical coordinates, applying ROTATE."""
+    if   ROTATE == 90:  mx[y,     7 - x] = v
+    elif ROTATE == 180: mx[7 - x, 7 - y] = v
+    elif ROTATE == 270: mx[7 - y, x    ] = v
+    else:               mx[x,     y    ] = v
+
 def glyph(ch, x0, y0):
     """Blit a 3x5 font glyph with its top-left corner at (x0, y0)."""
     g = FONT.get(ch)
@@ -487,17 +501,17 @@ def glyph(ch, x0, y0):
         row = g[ry]
         for cx in range(3):
             if row[cx] == "1":
-                mx[x0 + cx, y0 + ry] = 1
+                px(x0 + cx, y0 + ry)
 
 def draw_sequencer():
     mx.fill(0)
     for i, t in enumerate(tracks):
         r = i * 2
-        mx[t["buf_pos"] % 8, r] = 1
+        px(t["buf_pos"] % 8, r)
         if t["note"] != -1:
             cols = min(max(0, t["note_off_step"] - master_step), 8)
             for c in range(cols):
-                mx[c, r + 1] = 1
+                px(c, r + 1)
     mx.show()
 
 def draw_status(page):
@@ -507,21 +521,21 @@ def draw_status(page):
     """
     mx.fill(0)
     if page == "bpm":
-        mx[0, 0] = 1; mx[1, 0] = 1
+        px(0, 0); px(1, 0)
         glyph(str((BPM // 10) % 10), 0, 2)
         glyph(str(BPM % 10),         4, 2)
         # BPM tops out at 120, so the hundreds digit is always 1 — an
         # underline means "add 100" rather than trying to fit 3 digits.
         if BPM >= 100:
             for c in range(8):
-                mx[c, 7] = 1
+                px(c, 7)
     elif page == "oct":
-        mx[3, 0] = 1; mx[4, 0] = 1
+        px(3, 0); px(4, 0)
         if   octave > 0: glyph("+", 0, 2)
         elif octave < 0: glyph("-", 0, 2)
         glyph(str(abs(octave)), 4, 2)
     elif page == "scale":
-        mx[6, 0] = 1; mx[7, 0] = 1
+        px(6, 0); px(7, 0)
         glyph(SCALE_GLYPH[SCALE_NAMES[scale_idx]], 0, 2)
         glyph(note_name(ROOT)[0], 4, 2)
     elif page == "mod":
@@ -530,9 +544,9 @@ def draw_status(page):
         n = int(mod_val / 127.0 * 8 + 0.5)
         for c in range(n):
             for r in (3, 4, 5):
-                mx[c, r] = 1
-        mx[4, 1] = 1
-        mx[4, 7] = 1
+                px(c, r)
+        px(4, 1)
+        px(4, 7)
     mx.show()
 
 def status_signature(page):
