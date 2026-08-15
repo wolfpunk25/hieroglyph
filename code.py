@@ -416,6 +416,145 @@ tracks = [
 for t in tracks:
     t["buf"] = [nearest_in_register(n, t["low"], t["high"]) for n in t["buf"]]
 
+# ─────────────────────────────────────────────
+# Matrix: sequencer view + status overlay
+# ─────────────────────────────────────────────
+# The instrument previously had no way to show its own state — BPM,
+# octave, scale and root were all invisible, so they could only be
+# steered by ear with no idea where you were in the range.
+#
+# The matrix now has two modes:
+#
+#   SEQUENCER (default)  two rows per voice — a dot for position in the
+#                        phrase buffer, a bar counting down the current
+#                        note's remaining beats.
+#
+#   STATUS (transient)   a big readable value for whichever parameter
+#                        you just changed, then it falls back.
+#
+# Status appears automatically on change, so there is no gesture to
+# remember. Pressing BOTH tempo buttons (4+5) sweeps all three pages on
+# demand — that combination was previously a no-op, since up and down
+# cancelled out.
+# ─────────────────────────────────────────────
+
+# 3x5 pixel font. Two glyphs fit side by side on an 8x8 with a 1px gap.
+FONT = {
+    "0": ("111", "101", "101", "101", "111"),
+    "1": ("010", "110", "010", "010", "111"),
+    "2": ("111", "001", "111", "100", "111"),
+    "3": ("111", "001", "111", "001", "111"),
+    "4": ("101", "101", "111", "001", "001"),
+    "5": ("111", "100", "111", "001", "111"),
+    "6": ("111", "100", "111", "101", "111"),
+    "7": ("111", "001", "010", "010", "010"),
+    "8": ("111", "101", "111", "101", "111"),
+    "9": ("111", "101", "111", "001", "111"),
+    "+": ("000", "010", "111", "010", "000"),
+    "-": ("000", "000", "111", "000", "000"),
+    "P": ("111", "101", "111", "100", "100"),
+    "M": ("101", "111", "111", "101", "101"),
+    "D": ("110", "101", "101", "101", "110"),
+    "L": ("100", "100", "100", "100", "111"),
+    "B": ("110", "101", "110", "101", "110"),
+    "C": ("111", "100", "100", "100", "111"),
+    "F": ("111", "100", "111", "100", "100"),
+    "G": ("111", "100", "101", "101", "111"),
+    "A": ("111", "101", "111", "101", "101"),
+    "E": ("111", "100", "111", "100", "111"),
+}
+
+# major and minblues both start with M, so the letter is explicit.
+SCALE_GLYPH = {
+    "pentatonic": "P", "major": "M", "dorian": "D",
+    "lydian":     "L", "minblues": "B",
+}
+
+STATUS_DUR    = 1.5    # seconds a status page stays up
+STATUS_MOD    = 0.8    # shorter for the mod bar — it moves constantly
+status_page   = None   # None | "bpm" | "oct" | "scale" | "mod"
+status_expiry = 0.0
+status_queue  = None   # remaining pages when sweeping all three
+status_sig    = None   # last-rendered value, so we only redraw on change
+chord_last    = 0.0
+
+def glyph(ch, x0, y0):
+    """Blit a 3x5 font glyph with its top-left corner at (x0, y0)."""
+    g = FONT.get(ch)
+    if not g:
+        return
+    for ry in range(5):
+        row = g[ry]
+        for cx in range(3):
+            if row[cx] == "1":
+                mx[x0 + cx, y0 + ry] = 1
+
+def draw_sequencer():
+    mx.fill(0)
+    for i, t in enumerate(tracks):
+        r = i * 2
+        mx[t["buf_pos"] % 8, r] = 1
+        if t["note"] != -1:
+            cols = min(max(0, t["note_off_step"] - master_step), 8)
+            for c in range(cols):
+                mx[c, r + 1] = 1
+    mx.show()
+
+def draw_status(page):
+    """
+    Row 0 carries a position marker saying which page you're looking at:
+    left = tempo, centre = octave, right = scale. Rows 2-6 hold the value.
+    """
+    mx.fill(0)
+    if page == "bpm":
+        mx[0, 0] = 1; mx[1, 0] = 1
+        glyph(str((BPM // 10) % 10), 0, 2)
+        glyph(str(BPM % 10),         4, 2)
+        # BPM tops out at 120, so the hundreds digit is always 1 — an
+        # underline means "add 100" rather than trying to fit 3 digits.
+        if BPM >= 100:
+            for c in range(8):
+                mx[c, 7] = 1
+    elif page == "oct":
+        mx[3, 0] = 1; mx[4, 0] = 1
+        if   octave > 0: glyph("+", 0, 2)
+        elif octave < 0: glyph("-", 0, 2)
+        glyph(str(abs(octave)), 4, 2)
+    elif page == "scale":
+        mx[6, 0] = 1; mx[7, 0] = 1
+        glyph(SCALE_GLYPH[SCALE_NAMES[scale_idx]], 0, 2)
+        glyph(note_name(ROOT)[0], 4, 2)
+    elif page == "mod":
+        # Horizontal bar, 8 columns across the CC74 range, with centre
+        # reference marks above and below so 64 is easy to find.
+        n = int(mod_val / 127.0 * 8 + 0.5)
+        for c in range(n):
+            for r in (3, 4, 5):
+                mx[c, r] = 1
+        mx[4, 1] = 1
+        mx[4, 7] = 1
+    mx.show()
+
+def status_signature(page):
+    """Value identity for the current page — redraw only when this changes."""
+    if page == "bpm":   return (page, BPM)
+    if page == "oct":   return (page, octave)
+    if page == "scale": return (page, scale_idx, ROOT)
+    if page == "mod":   return (page, int(mod_val / 127.0 * 8 + 0.5))
+    return None
+
+def status_show(page, dur=STATUS_DUR):
+    global status_page, status_expiry, status_queue
+    status_page   = page
+    status_expiry = time.monotonic() + dur
+    status_queue  = None          # a direct change cancels any sweep
+
+def status_sweep():
+    """Show all three pages in turn — the 4+5 chord."""
+    global status_queue
+    status_show("bpm")
+    status_queue = ["oct", "scale"]
+
 next_tick = time.monotonic()
 
 # ─────────────────────────────────────────────
@@ -516,6 +655,7 @@ def root_shift():
     SCALE[:] = build_scale(ROOT, SCALE_SHAPES[SCALE_NAMES[scale_idx]])
     for t in tracks:
         t["buf"] = [nearest_in_register(n, t["low"], t["high"]) for n in t["buf"]]
+    status_show("scale")
     log(f"ROOT SHIFT → {note_name(ROOT)}  (cycle pos {root_cycle_idx})")
 
 
@@ -600,6 +740,7 @@ while True:
     if mod_val != last_mod:
         midi.send(ControlChange(74, mod_val))
         flash(COL_MOD)
+        status_show("mod", STATUS_MOD)
         log(f"MOD    CC74={mod_val}")
         last_mod = mod_val
 
@@ -608,10 +749,12 @@ while True:
     if btn("OCT_UP", 0.28):
         octave = min(2, octave + 1)
         flash(COL_OCTAVE)
+        status_show("oct")
         log(f"OCTAVE {octave:+d}  ({octave*12:+d} semitones)")
     if btn("OCT_DN", 0.28):
         octave = max(-2, octave - 1)
         flash(COL_OCTAVE)
+        status_show("oct")
         log(f"OCTAVE {octave:+d}  ({octave*12:+d} semitones)")
 
     # ── 3. Reset ──────────────────────────────────────────────────────────
@@ -667,14 +810,25 @@ while True:
     # ── 5. Tempo — rate-limited repeat while held ─────────────────────────
     # FIX: was time.sleep(0.1). Now repeats every 0.12s via btn() — same
     # feel, no blocking.
-    if btn("T_UP", 0.12):
-        BPM = min(120, BPM + 1)
-        flash(COL_TEMPO)
-        log(f"TEMPO  {BPM} BPM  (step={60/BPM*1000:.0f}ms)")
-    if btn("T_DN", 0.12):
-        BPM = max(50, BPM - 1)
-        flash(COL_TEMPO)
-        log(f"TEMPO  {BPM} BPM  (step={60/BPM*1000:.0f}ms)")
+    # Both tempo buttons together sweeps the full status display. That
+    # combination used to be a no-op (up then down cancelled out), so it
+    # costs nothing to claim it as a gesture.
+    if is_p("T_UP") and is_p("T_DN"):
+        if now - chord_last >= 0.6:
+            chord_last = now
+            status_sweep()
+            log("STATUS sweep (tempo chord)")
+    else:
+        if btn("T_UP", 0.12):
+            BPM = min(120, BPM + 1)
+            flash(COL_TEMPO)
+            status_show("bpm")
+            log(f"TEMPO  {BPM} BPM  (step={60/BPM*1000:.0f}ms)")
+        if btn("T_DN", 0.12):
+            BPM = max(50, BPM - 1)
+            flash(COL_TEMPO)
+            status_show("bpm")
+            log(f"TEMPO  {BPM} BPM  (step={60/BPM*1000:.0f}ms)")
 
     # ── 6. Sequencer tick ─────────────────────────────────────────────────
     if now >= next_tick:
@@ -682,7 +836,6 @@ while True:
         master_step += 1
         energy_ctr  += 1
         onboard_led.value = True
-        mx.fill(0)
 
         energy = get_energy()
 
@@ -699,6 +852,7 @@ while True:
             for t in tracks:
                 t["buf"] = [nearest_in_register(n, t["low"], t["high"]) for n in t["buf"]]
             flash(COL_SCALE, duration=0.6)
+            status_show("scale")
             log(f"SCALE  {old_name} → {SCALE_NAMES[scale_idx]}")
 
         for i, t in enumerate(tracks):
@@ -741,19 +895,32 @@ while True:
                     # FIX: SKIP_REST is now a pre-defined tuple, not a per-call list
                     t["next_play_step"] = master_step + random.choice(SKIP_REST)
 
-            # ── Matrix: buf_pos dot + note duration countdown bar ─────────
-            r = i * 2
-            mx[t["buf_pos"] % 8, r] = 1
-            if t["note"] != -1:
-                cols = min(max(0, t["note_off_step"] - master_step), 8)
-                for c in range(cols):
-                    mx[c, r + 1] = 1
-
-        mx.show()
+        # Matrix drawing moved into draw_sequencer() so the status overlay
+        # can take the display over and hand it straight back.
+        if status_page is None:
+            draw_sequencer()
 
         if master_step % 4 == 0:
             g = int(15 + 65 * energy)
             flash((0, g, int(g * 0.5)), duration=0.12)
+
+    # ── Status overlay ────────────────────────────────────────────────────
+    # Redraws only when the displayed value actually changes, so a page
+    # that sits there for 1.5 s costs one I2C write, not 150.
+    if status_page is not None:
+        if now >= status_expiry:
+            if status_queue:
+                status_page   = status_queue.pop(0)
+                status_expiry = now + STATUS_DUR
+            else:
+                status_page = None
+                status_sig  = None
+                draw_sequencer()      # hand the display straight back
+        if status_page is not None:
+            sig = status_signature(status_page)
+            if sig != status_sig:
+                status_sig = sig
+                draw_status(status_page)
 
     # ── Per-loop updates ──────────────────────────────────────────────────
     update_deco()

@@ -115,7 +115,10 @@ CircuitPython runs the file the moment it lands, so it starts playing immediatel
 Three vertical up/down columns, with the two disruptive controls — mutate and reset — on
 the isolated top and bottom keys, out of the play zone.
 
-Press **7 + 8 together** to snap the mod wheel back to centre (64).
+Two chords:
+
+- **7 + 8 together** — snap the mod wheel back to centre (64)
+- **4 + 5 together** — sweep the full status display on the matrix (BPM → octave → scale)
 
 > The keycap-to-GPIO wiring is soldered and is the ground truth. Which *function* sits on
 > which pin is just the `PIN_MAP` dict near the top of `code.py` — remap freely without
@@ -134,10 +137,35 @@ The NeoPixel colour-codes the last action, which is the quickest way to identify
 | 🟡 Gold | Reset / scale change |
 | 🟢 Green pulse | Idle — brightness tracks the energy cycle |
 
-The **8×8 matrix** gives two rows per voice: a dot showing position within the phrase
-buffer, and a bar counting down the current note's remaining beats.
-
 The **four PWM LEDs** flash on note-on, then decay to a slow phase-offset breathe.
+
+### The matrix
+
+The 8×8 matrix has two modes.
+
+**Sequencer view** (default) — two rows per voice: a dot showing position within the
+phrase buffer, and a bar counting down the current note's remaining beats.
+
+**Status view** (transient) — whenever you change a parameter, the matrix shows its value
+for about 1.5 s, then hands the display straight back. There's no gesture to remember;
+it appears exactly when you'd want it.
+
+Row 0 carries a marker showing which page you're looking at — **left** = tempo,
+**centre** = octave, **right** = scale:
+
+| Page | Shows | Example |
+|---|---|---|
+| Tempo | Two digits | `70` |
+| | BPM ≥ 100 adds a full-width underline on the bottom row | `20` + underline = 120 |
+| Octave | Sign and digit, blank sign at zero | `+2`, `0`, `-2` |
+| Scale | Scale letter, then root letter | `P C` = pentatonic in C |
+| Mod | Horizontal bar across the CC74 range | centre marks show where 64 is |
+
+Scale letters are `P`entatonic, `M`ajor, `D`orian, `L`ydian, `B`lues — `B` rather than `M`
+for minblues so it doesn't collide with major.
+
+Press **4 + 5 together** to sweep all three pages on demand. That combination was
+previously a no-op, since tempo up and down cancelled each other out.
 
 ---
 
